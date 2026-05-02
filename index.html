@@ -43,11 +43,11 @@
         ======================================================== -->
         <input type="hidden" id="user-account-select" value="">
 
-        <!-- ★ フォールバック用 ネイティブ select（常に表示・スマホで確実動作） -->
+        <!-- ★ フォールバック用 ネイティブ select（常に表示・スマホで確実動作）
+             候補は JS の buildUserPicker() が DB (user_accounts) から
+             動的に <option> を生成する。HTML には初期 placeholder のみ。 -->
         <select id="user-account-select-fallback" class="user-account-select-fallback">
           <option value="">氏名を選択してください</option>
-          <option value="murata_kazushi">村田和志</option>
-          <!-- 田中太郎 / 山田次郎 は削除済み -->
         </select>
 
         <!-- カスタムピッカーボタン（PC向け：JS初期化後に表示切替） -->

@@ -1,6 +1,7 @@
 /* ===========================
    村田鉄筋株式会社 作業報告書 - app.js
 =========================== */
+console.log('[app.js] loaded v2');
 
 /* ===========================
    認証・権限管理
@@ -182,7 +183,7 @@ async function loginAsUser(event) {
 
   let dbUsers = [];
   try {
-    const res  = await apiFetch(`tables/${USER_TABLE}?limit=500`);
+    const res  = await apiFetch(`/tables/${USER_TABLE}?limit=500`);
     const json = await res.json();
     dbUsers = json.data || [];
   } catch (fetchErr) {
@@ -303,7 +304,7 @@ async function ensureSeedAccount() {
   if (_seedChecked) return;
   _seedChecked = true;
   try {
-    const res  = await apiFetch(`tables/${USER_TABLE}?limit=1`);
+    const res  = await apiFetch(`/tables/${USER_TABLE}?limit=1`);
     const json = await res.json();
     const total = json.total ?? (json.data || []).length;
     if (total > 0) return; // 既にアカウントがあるなら何もしない
@@ -314,7 +315,7 @@ async function ensureSeedAccount() {
     const pwHash = await sha256(SEED_ACCOUNT.password);
     const now = new Date();
     const label = `${now.getFullYear()}/${String(now.getMonth()+1).padStart(2,'0')}/${String(now.getDate()).padStart(2,'0')}`;
-    await apiFetch(`tables/${USER_TABLE}`, {
+    await apiFetch(`/tables/${USER_TABLE}`, {
       method: 'POST',
       body: JSON.stringify({
         name:             SEED_ACCOUNT.name,
@@ -354,16 +355,21 @@ async function initAuth() {
 //   - is_active = false / 0 のユーザーは除外
 //   - 削除済み（deleted=1）は API 側で既にフィルタされて返らない
 //   - 一覧表示順は氏名の50音順（読みやすさ重視）
+//   - PC向けカスタムピッカー(#user-picker-list)とスマホ向けネイティブ
+//     <select id="user-account-select-fallback"> の両方を同じデータで同期する
 // ============================================================
 async function buildUserPicker() {
-  const listEl = document.getElementById('user-picker-list');
-  if (!listEl) return;
+  const listEl       = document.getElementById('user-picker-list');
+  const fallbackSel  = document.getElementById('user-account-select-fallback');
+  if (!listEl && !fallbackSel) return;
 
-  // ローディング表示
-  listEl.innerHTML = '<div class="user-picker-empty"><i class="fa-solid fa-spinner fa-spin"></i> 読み込み中...</div>';
+  // ローディング表示（カスタムピッカー）
+  if (listEl) {
+    listEl.innerHTML = '<div class="user-picker-empty"><i class="fa-solid fa-spinner fa-spin"></i> 読み込み中...</div>';
+  }
 
   try {
-    const res  = await apiFetch(`tables/${USER_TABLE}?limit=500`);
+    const res  = await apiFetch(`/tables/${USER_TABLE}?limit=500`);
     const json = await res.json();
     const dbUsers = (json.data || [])
       .filter(u => isUserActive(u))
@@ -377,11 +383,44 @@ async function buildUserPicker() {
       name:   u.name,
       source: 'db',
     }));
-    renderPickerList(listEl);
+
+    // ── PC向けカスタムピッカーを描画 ─────────────────────
+    if (listEl) renderPickerList(listEl);
+
+    // ── スマホ向けネイティブ <select> を再構築（同じデータ） ──
+    if (fallbackSel) renderFallbackSelect(fallbackSel);
+
+    console.log(`[buildUserPicker] DBから ${dbUsers.length} 件のユーザーを読み込みました`);
   } catch (e) {
     console.error('ユーザー一覧取得失敗:', e);
     _pickerAccounts = [];
-    listEl.innerHTML = '<div class="user-picker-empty">ユーザー一覧の取得に失敗しました</div>';
+    if (listEl) {
+      listEl.innerHTML = '<div class="user-picker-empty">ユーザー一覧の取得に失敗しました</div>';
+    }
+    if (fallbackSel) {
+      // フォールバックは placeholder のみ
+      fallbackSel.innerHTML = '<option value="">ユーザー一覧の取得に失敗しました</option>';
+    }
+  }
+}
+
+// スマホ向けネイティブ <select> を _pickerAccounts から再構築
+function renderFallbackSelect(selectEl) {
+  if (!selectEl) return;
+  // 現在の選択値を保持して再構築後に復元
+  const prevValue = selectEl.value;
+  const opts = ['<option value="">氏名を選択してください</option>'];
+  for (const u of _pickerAccounts) {
+    opts.push(
+      `<option value="${escHtml(u.id)}">${escHtml(u.name)}</option>`
+    );
+  }
+  selectEl.innerHTML = opts.join('');
+  // 元の選択がまだリストにあれば復元（無ければ未選択）
+  if (prevValue && _pickerAccounts.some(u => u.id === prevValue)) {
+    selectEl.value = prevValue;
+  } else {
+    selectEl.value = '';
   }
 }
 
@@ -739,13 +778,13 @@ async function submitReport(event) {
   try {
     let res;
     if (state.isEditing && state.currentReportId) {
-      res = await fetch(`tables/${TABLE}/${state.currentReportId}`, {
+      res = await fetch(`/tables/${TABLE}/${state.currentReportId}`, {
         method:  'PUT',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify(data),
       });
     } else {
-      res = await fetch(`tables/${TABLE}`, {
+      res = await fetch(`/tables/${TABLE}`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify(data),
@@ -791,7 +830,7 @@ async function loadReports() {
   listEl.innerHTML = `<div class="loading-state"><i class="fa-solid fa-spinner fa-spin"></i><p>読み込み中...</p></div>`;
 
   try {
-    const res = await fetch(`tables/${TABLE}?limit=500`);
+    const res = await fetch(`/tables/${TABLE}?limit=500`);
 
     // ★ HTTPステータスを必ず確認する
     if (!res.ok) {
@@ -941,7 +980,7 @@ async function showDetail(id) {
   state.currentReportId = id;
 
   try {
-    const res = await fetch(`tables/${TABLE}/${id}`);
+    const res = await fetch(`/tables/${TABLE}/${id}`);
     const r   = await res.json();
 
     // ========== 権限ガード ==========
@@ -1111,7 +1150,7 @@ async function editReport() {
   if (!state.currentReportId) return;
 
   try {
-    const res = await fetch(`tables/${TABLE}/${state.currentReportId}`);
+    const res = await fetch(`/tables/${TABLE}/${state.currentReportId}`);
     const r   = await res.json();
 
     // 権限ガード：一般ユーザーは自分の日報のみ編集可能
@@ -1188,7 +1227,7 @@ function deleteReport() {
   document.getElementById('confirm-delete-btn').onclick = async () => {
     try {
       // 権限ガード：削除直前にAPIから最新データを取得して owner_id を確認
-      const checkRes = await fetch(`tables/${TABLE}/${state.currentReportId}`);
+      const checkRes = await fetch(`/tables/${TABLE}/${state.currentReportId}`);
       const target   = await checkRes.json();
       const auth     = getAuth();
 
@@ -1199,7 +1238,7 @@ function deleteReport() {
         return;
       }
 
-      await fetch(`tables/${TABLE}/${state.currentReportId}`, { method: 'DELETE' });
+      await fetch(`/tables/${TABLE}/${state.currentReportId}`, { method: 'DELETE' });
       closeModal();
       showToast('報告書を削除しました', 'info');
       state.currentReportId = null;
@@ -1288,7 +1327,7 @@ async function loadUsers() {
     // 万一 DB が空ならブートストラップ（村田和志を投入）
     await ensureSeedAccount();
 
-    const res   = await apiFetch(`tables/${USER_TABLE}?limit=500`);
+    const res   = await apiFetch(`/tables/${USER_TABLE}?limit=500`);
     const json  = await res.json();
     const dbUsers = json.data || [];
 
@@ -1395,7 +1434,7 @@ async function submitAddUser(event) {
   submitBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 追加中...';
   try {
     // 重複チェック（DBから最新データを取得）
-    const listRes  = await apiFetch(`tables/${USER_TABLE}?limit=500`);
+    const listRes  = await apiFetch(`/tables/${USER_TABLE}?limit=500`);
     const listJson = await listRes.json();
     if ((listJson.data || []).find(u => u.login_id === loginId)) {
       _showErr(errEl, 'このログインIDはすでに登録されています');
@@ -1406,7 +1445,7 @@ async function submitAddUser(event) {
     const label  = `${now.getFullYear()}/${String(now.getMonth()+1).padStart(2,'0')}/${String(now.getDate()).padStart(2,'0')}`;
 
     // ★ DB に INSERT（POST /tables/user_accounts）
-    const postRes = await apiFetch(`tables/${USER_TABLE}`, {
+    const postRes = await apiFetch(`/tables/${USER_TABLE}`, {
       method: 'POST',
       body: JSON.stringify({
         name:             nameVal,
@@ -1472,12 +1511,12 @@ async function submitEditUser(event) {
   submitBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 保存中...';
   try {
     // 重複チェック（自分自身は除外）
-    const listRes  = await apiFetch(`tables/${USER_TABLE}?limit=500`);
+    const listRes  = await apiFetch(`/tables/${USER_TABLE}?limit=500`);
     const listJson = await listRes.json();
     const dup = (listJson.data || []).find(u => u.login_id === loginId && u.id !== dbId);
     if (dup) { _showErr(errEl, 'このログインIDはすでに使用されています'); return; }
 
-    const patchRes = await apiFetch(`tables/${USER_TABLE}/${dbId}`, {
+    const patchRes = await apiFetch(`/tables/${USER_TABLE}/${dbId}`, {
       method: 'PATCH',
       body: JSON.stringify({ name: nameVal, login_id: loginId }),
     });
@@ -1540,7 +1579,7 @@ async function submitChangePw(event) {
   submitBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 変更中...';
   try {
     const pwHash = await sha256(pw);
-    const patchRes = await apiFetch(`tables/${USER_TABLE}/${dbId}`, {
+    const patchRes = await apiFetch(`/tables/${USER_TABLE}/${dbId}`, {
       method: 'PATCH',
       body: JSON.stringify({ password_hash: pwHash }),
     });
@@ -1601,7 +1640,7 @@ async function executeToggleUser() {
   confirmBtn.disabled = true;
   confirmBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 変更中...';
   try {
-    const patchRes = await apiFetch(`tables/${USER_TABLE}/${_toggleTargetId}`, {
+    const patchRes = await apiFetch(`/tables/${USER_TABLE}/${_toggleTargetId}`, {
       method: 'PATCH',
       body: JSON.stringify({ is_active: _toggleToActive }),
     });
@@ -1645,7 +1684,7 @@ async function executeDeleteUser() {
   confirmBtn.disabled = true;
   confirmBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 削除中...';
   try {
-    const delRes = await apiFetch(`tables/${USER_TABLE}/${_deleteTargetId}`, { method: 'DELETE' });
+    const delRes = await apiFetch(`/tables/${USER_TABLE}/${_deleteTargetId}`, { method: 'DELETE' });
     if (!delRes.ok && delRes.status !== 204) {
       throw new Error(`DELETE failed: HTTP ${delRes.status}`);
     }
@@ -1819,7 +1858,7 @@ async function executeBulkDelete() {
     if (progEl) progEl.textContent = `削除中... ${i + 1} / ${targets.length} 件`;
 
     try {
-      const res = await fetch(`tables/${TABLE}/${r.id}`, { method: 'DELETE' });
+      const res = await fetch(`/tables/${TABLE}/${r.id}`, { method: 'DELETE' });
       if (res.ok || res.status === 204) {
         successCount++;
       } else {
