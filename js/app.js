@@ -8,17 +8,54 @@
 const ADMIN_PASSWORD = 'muratanippou';
 const SESSION_KEY    = 'murata_auth';
 const USER_TABLE     = 'user_accounts'; // DBユーザー管理テーブル
-// auth = { role: 'admin' | 'user', id: string, name: string }
+// auth = { role: 'admin' | 'user', id: string, name: string, db_id: string }
 
 // ============================================================
-// 一般ユーザーアカウント一覧
-// ※ 名前・パスワードはここで変更可能
+// ★ 一般アカウントは Cloudflare D1 (`user_accounts`) を
+//   唯一の真実源 (Single Source of Truth) として管理する。
+//   ローカル固定配列・localStorage には一切持たない。
+//
+// 初回起動時に DB にレコードが1件もない場合のみ、
+// 村田和志アカウントを seed として自動投入する
+// （この処理は ensureSeedAccount() で行う）。
 // ============================================================
-const USER_ACCOUNTS = [
-  { id: 'murata_kazushi', name: '村田和志', password: '1111' },
-  // 田中太郎 (tanaka_taro)  → 2024年削除済み
-  // 山田次郎 (yamada_jiro)  → 2024年削除済み
-];
+const SEED_ACCOUNT = {
+  login_id: 'murata_kazushi',
+  name:     '村田和志',
+  password: '1111',
+};
+
+// ============================================================
+// fetch 共通ユーティリティ
+//   - 末尾に cache-buster (_t=...) を付与し、CDN/ブラウザの
+//     古い結果を返さないようにする
+//   - 同時に Cache-Control: no-cache を明示
+// ============================================================
+function _withCacheBuster(url) {
+  const sep = url.includes('?') ? '&' : '?';
+  return url + sep + '_t=' + Date.now();
+}
+async function apiFetch(url, options = {}) {
+  const finalUrl = _withCacheBuster(url);
+  const headers  = Object.assign(
+    { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' },
+    options.headers || {}
+  );
+  if (options.body && !headers['Content-Type']) {
+    headers['Content-Type'] = 'application/json';
+  }
+  return fetch(finalUrl, { ...options, headers, cache: 'no-store' });
+}
+
+// is_active の判定: DB から戻ってくる値は boolean (true/false) または
+// integer (1/0) の両方ありうる。明示的に「無効=false/0」と判定する。
+function isUserActive(u) {
+  if (!u) return false;
+  const v = u.is_active;
+  if (v === undefined || v === null) return true; // 既定は有効
+  if (v === false || v === 0 || v === '0' || v === 'false') return false;
+  return true;
+}
 
 // セッションから認証情報を取得
 function getAuth() {
@@ -129,78 +166,62 @@ async function loginAsUser(event) {
   if (errorEl) errorEl.style.display = 'none';
 
   // =================================================================
-  // 【最優先】静的アカウント（USER_ACCOUNTS）で平文照合
-  //   → 村田和志/田中太郎/山田次郎は必ずここで成功する
-  // =================================================================
-  const staticAccount = USER_ACCOUNTS.find(u => u.id === userId);
-  console.log('[login] static account found:', !!staticAccount);
-
-  if (staticAccount) {
-    if (pw !== staticAccount.password) {
-      _loginError(errorEl, loginBtn, 'パスワードが違います');
-      return;
-    }
-    // 静的アカウントでログイン成功
-    sessionStorage.setItem(SESSION_KEY, JSON.stringify({
-      role: 'user',
-      id:   staticAccount.id,
-      name: staticAccount.name,
-    }));
-    enterApp();
-    return;
-  }
-
-  // =================================================================
-  // 【次】DBオンリーアカウント（管理者が追加したユーザー）の照合
-  //   DB取得失敗 or crypto.subtle 未対応でも止まらない
+  // ★ 認証は DB (user_accounts) のみで行う（Single Source of Truth）
+  //   1. DB から最新の user_accounts を取得（キャッシュ無効化）
+  //   2. login_id でレコードを検索
+  //   3. is_active = false なら拒否
+  //   4. password_hash を SHA-256 で照合
   // =================================================================
 
-  // crypto.subtle チェック
+  // crypto.subtle が使えないとハッシュ照合できない（HTTPS必須）
   if (!window.crypto || !window.crypto.subtle) {
-    console.warn('crypto.subtle が使えないためDBハッシュ照合をスキップします');
-    _loginError(errorEl, loginBtn, 'IDまたはパスワードが違います');
+    console.error('crypto.subtle が使えません。HTTPS環境で開いてください。');
+    _loginError(errorEl, loginBtn, 'この環境ではログインできません（HTTPS環境で開いてください）', false);
     return;
   }
 
   let dbUsers = [];
   try {
-    const res  = await fetch(`tables/${USER_TABLE}?limit=500`);
+    const res  = await apiFetch(`tables/${USER_TABLE}?limit=500`);
     const json = await res.json();
     dbUsers = json.data || [];
   } catch (fetchErr) {
-    console.warn('DBユーザー取得失敗:', fetchErr);
-    // dbUsers = [] のまま継続
-  }
-
-  const dbUser = dbUsers.find(u => u.login_id === userId);
-  if (dbUser) {
-    if (dbUser.is_active === false) {
-      _loginError(errorEl, loginBtn, 'このアカウントは無効化されています。管理者にお問い合わせください。', false);
-      return;
-    }
-    try {
-      const pwHash = await sha256(pw);
-      if (dbUser.password_hash !== pwHash) {
-        _loginError(errorEl, loginBtn, 'パスワードが違います');
-        return;
-      }
-    } catch (hashErr) {
-      console.warn('SHA-256ハッシュ計算失敗:', hashErr);
-      _loginError(errorEl, loginBtn, 'IDまたはパスワードが違います');
-      return;
-    }
-    sessionStorage.setItem(SESSION_KEY, JSON.stringify({
-      role:  'user',
-      id:    dbUser.login_id,
-      name:  dbUser.name,
-      db_id: dbUser.id,
-    }));
-    enterApp();
+    console.error('DBユーザー取得失敗:', fetchErr);
+    _loginError(errorEl, loginBtn, 'サーバーに接続できません。時間を置いて再度お試しください。', false);
     return;
   }
 
-  // どちらにも見つからない
-  _loginError(errorEl, loginBtn, 'IDまたはパスワードが違います');
+  const dbUser = dbUsers.find(u => u.login_id === userId);
+  if (!dbUser) {
+    _loginError(errorEl, loginBtn, 'IDまたはパスワードが違います');
+    return;
+  }
+
+  if (!isUserActive(dbUser)) {
+    _loginError(errorEl, loginBtn, 'このアカウントは無効化されています。管理者にお問い合わせください。', false);
+    return;
+  }
+
+  try {
+    const pwHash = await sha256(pw);
+    if (dbUser.password_hash !== pwHash) {
+      _loginError(errorEl, loginBtn, 'パスワードが違います');
+      return;
+    }
+  } catch (hashErr) {
+    console.error('SHA-256ハッシュ計算失敗:', hashErr);
+    _loginError(errorEl, loginBtn, 'IDまたはパスワードが違います');
+    return;
+  }
+
+  // ログイン成功
+  sessionStorage.setItem(SESSION_KEY, JSON.stringify({
+    role:  'user',
+    id:    dbUser.login_id,  // owner_id 用（既存日報の互換性のため login_id を使用）
+    name:  dbUser.name,
+    db_id: dbUser.id,
+  }));
+  enterApp();
 }
 
 // エラーメッセージ表示（ボタン状態変更なし）
@@ -272,8 +293,49 @@ function toggleUserPasswordVisibility() {
 // ユーザーピッカーに表示するアカウント一覧（キャッシュ）
 let _pickerAccounts = [];
 
+// ============================================================
+// 初回ブートストラップ:
+// DB にユーザーが1件もない場合のみ村田和志アカウントを投入する。
+// （既に存在する環境では何もしない）
+// ============================================================
+let _seedChecked = false;
+async function ensureSeedAccount() {
+  if (_seedChecked) return;
+  _seedChecked = true;
+  try {
+    const res  = await apiFetch(`tables/${USER_TABLE}?limit=1`);
+    const json = await res.json();
+    const total = json.total ?? (json.data || []).length;
+    if (total > 0) return; // 既にアカウントがあるなら何もしない
+
+    // crypto.subtle が使えない環境では seed しない（HTTPSが必要）
+    if (!window.crypto || !window.crypto.subtle) return;
+
+    const pwHash = await sha256(SEED_ACCOUNT.password);
+    const now = new Date();
+    const label = `${now.getFullYear()}/${String(now.getMonth()+1).padStart(2,'0')}/${String(now.getDate()).padStart(2,'0')}`;
+    await apiFetch(`tables/${USER_TABLE}`, {
+      method: 'POST',
+      body: JSON.stringify({
+        name:             SEED_ACCOUNT.name,
+        login_id:         SEED_ACCOUNT.login_id,
+        password_hash:    pwHash,
+        role:             'user',
+        is_active:        true,
+        created_at_label: '（初期設定）',
+      }),
+    });
+    console.log('[seed] 初期アカウントを投入しました:', SEED_ACCOUNT.login_id);
+  } catch (e) {
+    console.warn('[seed] 初期アカウント投入チェック失敗:', e);
+  }
+}
+
 async function initAuth() {
-  // カスタムユーザーピッカーの候補を構築
+  // ★ 起動時に 1度だけ、DBが空なら初期アカウントを投入
+  await ensureSeedAccount();
+
+  // カスタムユーザーピッカーの候補を構築（DBのみから取得）
   await buildUserPicker();
 
   if (isLoggedIn()) {
@@ -287,40 +349,39 @@ async function initAuth() {
 // カスタムユーザーピッカー
 // ===================================================
 
-// 候補リストを構築（DB取得 + 静的フォールバック）
+// ============================================================
+// 候補リストを構築 ─ ★ DB (user_accounts) のみから取得
+//   - is_active = false / 0 のユーザーは除外
+//   - 削除済み（deleted=1）は API 側で既にフィルタされて返らない
+//   - 一覧表示順は氏名の50音順（読みやすさ重視）
+// ============================================================
 async function buildUserPicker() {
   const listEl = document.getElementById('user-picker-list');
   if (!listEl) return;
 
-  // まず静的アカウントをすぐ表示（レスポンス改善）
-  _pickerAccounts = USER_ACCOUNTS.map(u => ({ id: u.id, name: u.name, source: 'static' }));
-  renderPickerList(listEl);
+  // ローディング表示
+  listEl.innerHTML = '<div class="user-picker-empty"><i class="fa-solid fa-spinner fa-spin"></i> 読み込み中...</div>';
 
-  // DBから追加アカウントを取得
   try {
-    const res  = await fetch(`tables/${USER_TABLE}?limit=500`);
+    const res  = await apiFetch(`tables/${USER_TABLE}?limit=500`);
     const json = await res.json();
-    const dbUsers = (json.data || []).filter(u => u.is_active !== false);
+    const dbUsers = (json.data || [])
+      .filter(u => isUserActive(u))
+      .filter(u => u.login_id);
 
-    // DBにある静的アカウントのID（重複除去用）
-    const dbLoginIds = new Set(dbUsers.map(u => u.login_id));
+    // 氏名の50音順
+    dbUsers.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'));
 
-    // 静的アカウントをDB版で上書き（DBで編集済みの場合は名前をDB優先）
-    const mergedStatic = USER_ACCOUNTS.map(u => {
-      const dbMatch = dbUsers.find(d => d.login_id === u.id);
-      return { id: u.id, name: dbMatch ? dbMatch.name : u.name, source: 'static' };
-    });
-
-    // DB専用アカウント（静的アカウントにないもの）
-    const dbOnly = dbUsers
-      .filter(u => !USER_ACCOUNTS.find(s => s.id === u.login_id))
-      .map(u => ({ id: u.login_id, name: u.name, source: 'db' }));
-
-    _pickerAccounts = [...mergedStatic, ...dbOnly];
+    _pickerAccounts = dbUsers.map(u => ({
+      id:     u.login_id,
+      name:   u.name,
+      source: 'db',
+    }));
     renderPickerList(listEl);
   } catch (e) {
-    console.warn('ユーザー一覧取得失敗（静的アカウントのみ使用）:', e);
-    // 静的アカウントのみで続行（既に表示済み）
+    console.error('ユーザー一覧取得失敗:', e);
+    _pickerAccounts = [];
+    listEl.innerHTML = '<div class="user-picker-empty">ユーザー一覧の取得に失敗しました</div>';
   }
 }
 
@@ -452,7 +513,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const hiddenInput = document.getElementById('user-account-select');
       if (hiddenInput) hiddenInput.value = id;
       // カスタムボタンのラベルを更新
-      const account = _pickerAccounts.find(u => u.id === id) || USER_ACCOUNTS.find(u => u.id === id);
+      const account = _pickerAccounts.find(u => u.id === id);
       const label = document.getElementById('user-select-label');
       if (label) {
         if (id && account) {
@@ -1213,37 +1274,10 @@ async function sha256(str) {
 =========================== */
 
 // ------------------------------------------------
-// 静的アカウントをDBへマイグレーション
-// （管理者が初めてユーザー管理画面を開いた際に自動実行）
+// ユーザー一覧を読み込んで表示（管理者専用）
+//   ★ DB から取得した結果のみで描画。静的配列・localStorage は一切参照しない。
+//   ★ 並び順: 新しく追加された順（created_at 降順）
 // ------------------------------------------------
-async function migrateStaticAccounts(dbUsers) {
-  for (const u of USER_ACCOUNTS) {
-    // login_id が一致するレコードが既にDBにあればスキップ
-    if (dbUsers.find(d => d.login_id === u.id)) continue;
-
-    const pwHash = await sha256(u.password);
-    const now    = new Date();
-    const label  = `${now.getFullYear()}/${String(now.getMonth()+1).padStart(2,'0')}/${String(now.getDate()).padStart(2,'0')}`;
-    try {
-      await fetch(`tables/${USER_TABLE}`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name:             u.name,
-          login_id:         u.id,
-          password_hash:    pwHash,
-          role:             'user',
-          is_active:        true,
-          created_at_label: '（初期設定）',
-        }),
-      });
-    } catch (e) {
-      console.warn('マイグレーション失敗:', u.id, e);
-    }
-  }
-}
-
-// ユーザー一覧を読み込んで表示
 async function loadUsers() {
   if (!isAdmin()) { showView('list'); return; }
   const tbody = document.getElementById('users-table-body');
@@ -1251,36 +1285,29 @@ async function loadUsers() {
   tbody.innerHTML = '<tr><td colspan="6" class="users-loading"><i class="fa-solid fa-spinner fa-spin"></i> 読み込み中...</td></tr>';
 
   try {
-    const res     = await fetch(`tables/${USER_TABLE}?limit=500`);
-    const json    = await res.json();
-    let dbUsers   = json.data || [];
+    // 万一 DB が空ならブートストラップ（村田和志を投入）
+    await ensureSeedAccount();
 
-    // 静的アカウントのうちDBに未登録のものを自動マイグレーション
-    const needsMigration = USER_ACCOUNTS.some(u => !dbUsers.find(d => d.login_id === u.id));
-    if (needsMigration) {
-      await migrateStaticAccounts(dbUsers);
-      // 再取得
-      const res2   = await fetch(`tables/${USER_TABLE}?limit=500`);
-      const json2  = await res2.json();
-      dbUsers      = json2.data || [];
-    }
+    const res   = await apiFetch(`tables/${USER_TABLE}?limit=500`);
+    const json  = await res.json();
+    const dbUsers = json.data || [];
 
     if (dbUsers.length === 0) {
       tbody.innerHTML = '<tr><td colspan="6" class="users-empty">ユーザーがいません</td></tr>';
       return;
     }
 
-    // 登録日昇順で並べる（created_at は ms）
-    dbUsers.sort((a, b) => (a.created_at || 0) - (b.created_at || 0));
+    // 新しく追加された順（created_at 降順）で表示
+    dbUsers.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
     tbody.innerHTML = dbUsers.map(u => renderUserRow(u)).join('');
   } catch (err) {
-    console.error(err);
+    console.error('loadUsers error:', err);
     tbody.innerHTML = '<tr><td colspan="6" class="users-empty">読み込みに失敗しました</td></tr>';
   }
 }
 
 function renderUserRow(u) {
-  const isActive   = u.is_active !== false;
+  const isActive   = isUserActive(u);
   const statusBadge = isActive
     ? '<span class="user-status-badge active"><i class="fa-solid fa-circle-check"></i> 有効</span>'
     : '<span class="user-status-badge inactive"><i class="fa-solid fa-circle-xmark"></i> 無効</span>';
@@ -1367,8 +1394,8 @@ async function submitAddUser(event) {
   submitBtn.disabled = true;
   submitBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 追加中...';
   try {
-    // 重複チェック
-    const listRes  = await fetch(`tables/${USER_TABLE}?limit=500`);
+    // 重複チェック（DBから最新データを取得）
+    const listRes  = await apiFetch(`tables/${USER_TABLE}?limit=500`);
     const listJson = await listRes.json();
     if ((listJson.data || []).find(u => u.login_id === loginId)) {
       _showErr(errEl, 'このログインIDはすでに登録されています');
@@ -1377,17 +1404,32 @@ async function submitAddUser(event) {
     const pwHash = await sha256(pw);
     const now    = new Date();
     const label  = `${now.getFullYear()}/${String(now.getMonth()+1).padStart(2,'0')}/${String(now.getDate()).padStart(2,'0')}`;
-    await fetch(`tables/${USER_TABLE}`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: nameVal, login_id: loginId, password_hash: pwHash,
-        role: 'user', is_active: true, created_at_label: label }),
+
+    // ★ DB に INSERT（POST /tables/user_accounts）
+    const postRes = await apiFetch(`tables/${USER_TABLE}`, {
+      method: 'POST',
+      body: JSON.stringify({
+        name:             nameVal,
+        login_id:         loginId,
+        password_hash:    pwHash,
+        role:             'user',
+        is_active:        true,
+        created_at_label: label,
+      }),
     });
+    if (!postRes.ok) {
+      const errBody = await postRes.text().catch(() => '');
+      throw new Error(`POST failed: HTTP ${postRes.status} ${errBody}`);
+    }
+
     closeAddUserModal();
     showToast(`ユーザー「${nameVal}」を追加しました ✅`, 'success');
+
+    // ★ 一覧 + ログイン画面ピッカーを DB から再取得して即時反映
     await loadUsers();
-    await initAuth();
+    await buildUserPicker();
   } catch (err) {
-    console.error(err);
+    console.error('submitAddUser error:', err);
     _showErr(errEl, '保存に失敗しました。もう一度お試しください。');
   } finally {
     submitBtn.disabled = false;
@@ -1430,19 +1472,22 @@ async function submitEditUser(event) {
   submitBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 保存中...';
   try {
     // 重複チェック（自分自身は除外）
-    const listRes  = await fetch(`tables/${USER_TABLE}?limit=500`);
+    const listRes  = await apiFetch(`tables/${USER_TABLE}?limit=500`);
     const listJson = await listRes.json();
     const dup = (listJson.data || []).find(u => u.login_id === loginId && u.id !== dbId);
     if (dup) { _showErr(errEl, 'このログインIDはすでに使用されています'); return; }
 
-    await fetch(`tables/${USER_TABLE}/${dbId}`, {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    const patchRes = await apiFetch(`tables/${USER_TABLE}/${dbId}`, {
+      method: 'PATCH',
       body: JSON.stringify({ name: nameVal, login_id: loginId }),
     });
+    if (!patchRes.ok) {
+      throw new Error(`PATCH failed: HTTP ${patchRes.status}`);
+    }
     closeEditUserModal();
     showToast(`「${nameVal}」の情報を更新しました ✅`, 'success');
     await loadUsers();
-    await initAuth();
+    await buildUserPicker();
   } catch (err) {
     console.error(err);
     _showErr(errEl, '保存に失敗しました。もう一度お試しください。');
@@ -1495,10 +1540,13 @@ async function submitChangePw(event) {
   submitBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 変更中...';
   try {
     const pwHash = await sha256(pw);
-    await fetch(`tables/${USER_TABLE}/${dbId}`, {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    const patchRes = await apiFetch(`tables/${USER_TABLE}/${dbId}`, {
+      method: 'PATCH',
       body: JSON.stringify({ password_hash: pwHash }),
     });
+    if (!patchRes.ok) {
+      throw new Error(`PATCH failed: HTTP ${patchRes.status}`);
+    }
     closeChangePwModal();
     showToast('パスワードを変更しました ✅', 'success');
   } catch (err) {
@@ -1553,14 +1601,17 @@ async function executeToggleUser() {
   confirmBtn.disabled = true;
   confirmBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 変更中...';
   try {
-    await fetch(`tables/${USER_TABLE}/${_toggleTargetId}`, {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    const patchRes = await apiFetch(`tables/${USER_TABLE}/${_toggleTargetId}`, {
+      method: 'PATCH',
       body: JSON.stringify({ is_active: _toggleToActive }),
     });
+    if (!patchRes.ok) {
+      throw new Error(`PATCH failed: HTTP ${patchRes.status}`);
+    }
     closeToggleUserModal();
     showToast(`「${_toggleTargetName}」を${_toggleToActive ? '有効化' : '無効化'}しました`, 'info');
     await loadUsers();
-    await initAuth();
+    await buildUserPicker();
   } catch (err) {
     console.error(err);
     showToast('変更に失敗しました', 'error');
@@ -1594,11 +1645,14 @@ async function executeDeleteUser() {
   confirmBtn.disabled = true;
   confirmBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 削除中...';
   try {
-    await fetch(`tables/${USER_TABLE}/${_deleteTargetId}`, { method: 'DELETE' });
+    const delRes = await apiFetch(`tables/${USER_TABLE}/${_deleteTargetId}`, { method: 'DELETE' });
+    if (!delRes.ok && delRes.status !== 204) {
+      throw new Error(`DELETE failed: HTTP ${delRes.status}`);
+    }
     closeDeleteUserModal();
     showToast(`「${_deleteTargetName}」を削除しました`, 'info');
     await loadUsers();
-    await initAuth();
+    await buildUserPicker();
   } catch (err) {
     console.error(err);
     showToast('削除に失敗しました', 'error');
