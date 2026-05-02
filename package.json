@@ -1,20 +1,18 @@
 {
-  "name": "webapp",
-  "type": "module",
+  "name": "sagyouhokokushosisutemu",
+  "version": "1.0.0",
+  "description": "村田鉄筋株式会社 作業報告書システム",
+  "private": true,
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "wrangler pages dev",
-    "deploy": "npm run build && wrangler pages deploy",
-    "cf-typegen": "wrangler types --env-interface CloudflareBindings"
-  },
-  "dependencies": {
-    "hono": "^4.12.12"
+    "dev": "wrangler pages dev . --local --ip 0.0.0.0 --port 3000",
+    "deploy": "wrangler pages deploy . --project-name sagyouhokokushosisutemu",
+    "db:migrate:local": "wrangler d1 execute sagyouhokokushosisutemu-db --local --file=./schema.sql",
+    "db:migrate:prod": "wrangler d1 execute sagyouhokokushosisutemu-db --file=./schema.sql",
+    "db:console:local": "wrangler d1 execute sagyouhokokushosisutemu-db --local",
+    "db:console:prod": "wrangler d1 execute sagyouhokokushosisutemu-db",
+    "clean-port": "fuser -k 3000/tcp 2>/dev/null || true"
   },
   "devDependencies": {
-    "@hono/vite-build": "^1.2.0",
-    "@hono/vite-dev-server": "^0.18.2",
-    "vite": "^6.3.5",
-    "wrangler": "^4.4.0"
+    "wrangler": "^3.78.0"
   }
 }

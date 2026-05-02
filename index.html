@@ -1,0 +1,783 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>作業報告書 - 村田鉄筋株式会社</title>
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+</head>
+<body>
+
+  <!-- ===== ログイン画面 ===== -->
+  <div id="login-screen" class="login-screen">
+    <div class="login-card">
+      <div class="login-logo">
+        <i class="fa-solid fa-hard-hat"></i>
+      </div>
+      <div class="login-company">村田鉄筋株式会社</div>
+      <h1 class="login-title">作業報告書システム</h1>
+
+      <!-- ===== ログイン種別タブ ===== -->
+      <div class="login-tabs">
+        <button type="button" class="login-tab active" id="tab-user" onclick="switchLoginTab('user')">
+          <i class="fa-solid fa-user"></i> 一般ログイン
+        </button>
+        <button type="button" class="login-tab" id="tab-admin" onclick="switchLoginTab('admin')">
+          <i class="fa-solid fa-shield-halved"></i> 管理者ログイン
+        </button>
+      </div>
+
+      <!-- ===== 一般ユーザーフォーム ===== -->
+      <form class="login-form" id="form-user" onsubmit="loginAsUser(event)">
+        <p class="login-subtitle">氏名を選択してパスワードを入力してください</p>
+
+        <!-- ========================================================
+             氏名選択UI
+             【優先1】ネイティブselect（スマホで最も確実に動く）
+             【優先2】カスタムピッカーボタン（PC向けデザイン）
+             内部的な値保持用 hidden input
+        ======================================================== -->
+        <input type="hidden" id="user-account-select" value="">
+
+        <!-- ★ フォールバック用 ネイティブ select（常に表示・スマホで確実動作） -->
+        <select id="user-account-select-fallback" class="user-account-select-fallback">
+          <option value="">氏名を選択してください</option>
+          <option value="murata_kazushi">村田和志</option>
+          <!-- 田中太郎 / 山田次郎 は削除済み -->
+        </select>
+
+        <!-- カスタムピッカーボタン（PC向け：JS初期化後に表示切替） -->
+        <button type="button" id="user-select-btn" class="user-select-btn"
+                onclick="openUserPicker()" aria-haspopup="listbox" aria-expanded="false"
+                style="display:none;">
+          <i class="fa-solid fa-user user-select-icon"></i>
+          <span id="user-select-label" class="user-select-label">氏名を選択してください</span>
+          <i class="fa-solid fa-chevron-down user-select-arrow"></i>
+        </button>
+
+        <!-- 候補ドロップダウン（PC）/ ボトムシート（スマホ） -->
+        <div id="user-picker-backdrop" class="user-picker-backdrop" onclick="closeUserPicker()"></div>
+        <div id="user-picker-panel" class="user-picker-panel" role="listbox" aria-label="氏名一覧">
+          <div class="user-picker-header">
+            <span class="user-picker-title">氏名を選択してください</span>
+            <button type="button" class="user-picker-close" onclick="closeUserPicker()" aria-label="閉じる">
+              <i class="fa-solid fa-xmark"></i>
+            </button>
+          </div>
+          <div id="user-picker-list" class="user-picker-list">
+            <!-- JS で動的に追加 -->
+            <div class="user-picker-loading">
+              <i class="fa-solid fa-spinner fa-spin"></i> 読み込み中...
+            </div>
+          </div>
+        </div>
+
+        <div class="login-input-wrap">
+          <i class="fa-solid fa-lock"></i>
+          <input type="password" id="user-password-input" placeholder="パスワード" autocomplete="current-password">
+          <button type="button" class="toggle-pw" onclick="toggleUserPasswordVisibility()" tabindex="-1">
+            <i class="fa-solid fa-eye" id="user-pw-eye-icon"></i>
+          </button>
+        </div>
+        <div class="login-error" id="user-error">
+          <i class="fa-solid fa-circle-exclamation"></i>
+        </div>
+        <button type="submit" class="login-btn">
+          <i class="fa-solid fa-right-to-bracket"></i> ログイン
+        </button>
+      </form>
+
+      <!-- ===== 管理者フォーム ===== -->
+      <form class="login-form" id="form-admin" onsubmit="loginAsAdmin(event)" style="display:none;">
+        <p class="login-subtitle">管理者パスワードを入力してください</p>
+        <div class="login-input-wrap">
+          <i class="fa-solid fa-lock"></i>
+          <input type="password" id="password-input" placeholder="パスワード" autocomplete="current-password" required>
+          <button type="button" class="toggle-pw" onclick="togglePasswordVisibility()" tabindex="-1">
+            <i class="fa-solid fa-eye" id="pw-eye-icon"></i>
+          </button>
+        </div>
+        <div class="login-error" id="login-error">
+          <i class="fa-solid fa-circle-exclamation"></i> パスワードが違います
+        </div>
+        <button type="submit" class="login-btn admin-btn">
+          <i class="fa-solid fa-shield-halved"></i> 管理者としてログイン
+        </button>
+      </form>
+
+    </div>
+  </div>
+
+  <!-- ===== メインアプリ（認証後に表示） ===== -->
+  <div id="app-wrapper" style="display:none;">
+
+  <!-- ヘッダー -->
+  <header class="app-header">
+    <div class="app-header-inner">
+      <div class="app-logo">
+        <i class="fa-solid fa-hard-hat"></i>
+        <span>村田鉄筋株式会社　作業報告書</span>
+      </div>
+      <nav class="app-nav">
+        <button class="nav-btn active" id="btn-list" onclick="showView('list')">
+          <i class="fa-solid fa-list"></i> 一覧
+        </button>
+        <button class="nav-btn" id="btn-new" onclick="showView('form')">
+          <i class="fa-solid fa-plus"></i> 新規作成
+        </button>
+        <!-- 管理者のみ表示 -->
+        <button class="nav-btn" id="btn-users" onclick="showView('users')" style="display:none;">
+          <i class="fa-solid fa-users-gear"></i> ユーザー管理
+        </button>
+        <div class="header-user-info" id="header-user-info">
+          <span class="header-user-badge" id="header-user-badge"></span>
+          <span class="header-user-name" id="header-user-name"></span>
+          <button class="nav-btn logout-btn" onclick="logout()">
+            <i class="fa-solid fa-right-from-bracket"></i> ログアウト
+          </button>
+        </div>
+      </nav>
+    </div>
+  </header>
+
+  <main class="main-content">
+
+    <!-- ===== 一覧ビュー ===== -->
+    <section id="view-list" class="view active">
+      <div class="container">
+        <div class="page-header">
+          <h2 class="page-title"><i class="fa-solid fa-folder-open"></i> 報告書一覧</h2>
+          <div class="list-controls">
+            <div class="search-box">
+              <i class="fa-solid fa-magnifying-glass"></i>
+              <input type="text" id="search-input" placeholder="現場名・職長・記入者で検索..." oninput="filterReports()">
+            </div>
+            <!-- 管理者のみ表示 -->
+            <button class="btn btn-pdf" id="btn-pdf-download" onclick="openPdfModal()" style="display:none;">
+              <i class="fa-solid fa-file-pdf"></i> PDF一括ダウンロード
+            </button>
+            <button class="btn btn-bulk-delete" id="btn-bulk-delete" onclick="openBulkDeleteModal()" style="display:none;">
+              <i class="fa-solid fa-trash-can"></i> 日報一括削除
+            </button>
+          </div>
+        </div>
+
+        <!-- 一覧 -->
+        <div id="report-list" class="report-list">
+          <div class="loading-state">
+            <i class="fa-solid fa-spinner fa-spin"></i>
+            <p>読み込み中...</p>
+          </div>
+        </div>
+        <div class="pagination" id="pagination"></div>
+      </div>
+    </section>
+
+    <!-- ===== 入力フォームビュー ===== -->
+    <section id="view-form" class="view">
+      <div class="container">
+        <div class="page-header">
+          <h2 class="page-title" id="form-title">
+            <i class="fa-solid fa-pen-to-square"></i> 新規作成
+          </h2>
+          <button class="btn btn-secondary" onclick="showView('list')">
+            <i class="fa-solid fa-arrow-left"></i> 一覧へ戻る
+          </button>
+        </div>
+
+        <!-- 帳票風フォーム -->
+        <form id="report-form" onsubmit="submitReport(event)">
+          <input type="hidden" id="edit-id">
+
+          <!-- 帳票ヘッダー -->
+          <div class="form-sheet">
+
+            <!-- タイトル行 -->
+            <div class="sheet-title-row">
+              <div class="sheet-title-box">作　業　報　告　書</div>
+              <div class="sheet-company-box">
+                <div class="company-name">村田鉄筋株式会社</div>
+                <div class="date-row">
+                  <div class="date-fields">
+                    <div class="form-inline-group">
+                      <input type="date" id="report-date" class="date-input" required>
+                    </div>
+                    <span class="day-label" id="day-label">曜日</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 現場名・職長 -->
+            <div class="sheet-row two-col">
+              <div class="sheet-cell label-cell">現場名：</div>
+              <div class="sheet-cell input-cell">
+                <input type="text" id="site-name" placeholder="現場名を入力" required>
+              </div>
+              <div class="sheet-cell label-cell narrow">職　長：</div>
+              <div class="sheet-cell input-cell narrow">
+                <input type="text" id="foreman" placeholder="職長名" required>
+              </div>
+            </div>
+
+            <!-- 人員名・合計・記入者 -->
+            <div class="sheet-row two-col">
+              <div class="sheet-cell label-cell">人員名：</div>
+              <div class="sheet-cell input-cell">
+                <input type="text" id="worker-names" placeholder="人員名を入力（複数の場合はカンマ区切り）" required>
+              </div>
+              <div class="sheet-cell label-cell-mid">合計</div>
+              <div class="sheet-cell input-cell-short">
+                <input type="number" id="worker-count" min="1" max="999" placeholder="0"> 名
+              </div>
+              <div class="sheet-cell label-cell-mid">記入者名：</div>
+              <div class="sheet-cell input-cell">
+                <input type="text" id="recorder" placeholder="記入者名" required>
+              </div>
+            </div>
+
+            <!-- チェック項目 -->
+            <div class="check-section">
+              <!-- チェック項目ヘッダー -->
+              <div class="check-header-row">
+                <div class="check-question-col"></div>
+                <div class="check-choice-col">〇</div>
+                <div class="check-choice-col">×</div>
+              </div>
+
+              <div class="check-row" id="row-greeting">
+                <div class="check-question">あいさつは出来ていましたか？</div>
+                <label class="check-radio-label">
+                  <input type="radio" name="check_greeting" value="〇" required>
+                  <span class="radio-mark radio-mark-maru">〇</span>
+                </label>
+                <label class="check-radio-label">
+                  <input type="radio" name="check_greeting" value="×">
+                  <span class="radio-mark radio-mark-batsu">×</span>
+                </label>
+              </div>
+
+              <div class="check-row">
+                <div class="check-question">KY活動は行いましたか？</div>
+                <label class="check-radio-label">
+                  <input type="radio" name="check_ky" value="〇" required>
+                  <span class="radio-mark radio-mark-maru">〇</span>
+                </label>
+                <label class="check-radio-label">
+                  <input type="radio" name="check_ky" value="×">
+                  <span class="radio-mark radio-mark-batsu">×</span>
+                </label>
+              </div>
+
+              <div class="check-row">
+                <div class="check-question">職長の指示は、的確になされていましたか？</div>
+                <label class="check-radio-label">
+                  <input type="radio" name="check_foreman_support" value="〇" required>
+                  <span class="radio-mark radio-mark-maru">〇</span>
+                </label>
+                <label class="check-radio-label">
+                  <input type="radio" name="check_foreman_support" value="×">
+                  <span class="radio-mark radio-mark-batsu">×</span>
+                </label>
+              </div>
+
+              <div class="check-row">
+                <div class="check-question">職長の方は、思うように指示を出せましたか？</div>
+                <label class="check-radio-label">
+                  <input type="radio" name="check_foreman_ability" value="〇" required>
+                  <span class="radio-mark radio-mark-maru">〇</span>
+                </label>
+                <label class="check-radio-label">
+                  <input type="radio" name="check_foreman_ability" value="×">
+                  <span class="radio-mark radio-mark-batsu">×</span>
+                </label>
+              </div>
+
+              <div class="check-row">
+                <div class="check-question">打ち合わせはうまく進みましたか？</div>
+                <label class="check-radio-label">
+                  <input type="radio" name="check_meeting" value="〇" required>
+                  <span class="radio-mark radio-mark-maru">〇</span>
+                </label>
+                <label class="check-radio-label">
+                  <input type="radio" name="check_meeting" value="×">
+                  <span class="radio-mark radio-mark-batsu">×</span>
+                </label>
+              </div>
+
+              <div class="check-row">
+                <div class="check-question">現場の整理・整頓は終わりましたか？</div>
+                <label class="check-radio-label">
+                  <input type="radio" name="check_cleanup" value="〇" required>
+                  <span class="radio-mark radio-mark-maru">〇</span>
+                </label>
+                <label class="check-radio-label">
+                  <input type="radio" name="check_cleanup" value="×">
+                  <span class="radio-mark radio-mark-batsu">×</span>
+                </label>
+              </div>
+
+              <div class="check-row">
+                <div class="check-question">道具類の片付けは終わりましたか？</div>
+                <label class="check-radio-label">
+                  <input type="radio" name="check_tools" value="〇" required>
+                  <span class="radio-mark radio-mark-maru">〇</span>
+                </label>
+                <label class="check-radio-label">
+                  <input type="radio" name="check_tools" value="×">
+                  <span class="radio-mark radio-mark-batsu">×</span>
+                </label>
+              </div>
+
+              <!-- 体調 -->
+              <div class="check-row multi-choice">
+                <div class="check-question">本日の体調はどうでしたか？</div>
+                <div class="multi-choices">
+                  <label class="choice-label">
+                    <input type="radio" name="health" value="良好" required>
+                    <span class="choice-text">良好</span>
+                  </label>
+                  <label class="choice-label">
+                    <input type="radio" name="health" value="不調">
+                    <span class="choice-text">不調</span>
+                  </label>
+                  <label class="choice-label">
+                    <input type="radio" name="health" value="普通">
+                    <span class="choice-text">普通</span>
+                  </label>
+                </div>
+              </div>
+
+              <!-- 加工帳・ミス -->
+              <div class="check-row multi-choice">
+                <div class="check-question">加工帳・ミス・現場での変更・などの有無</div>
+                <div class="multi-choices">
+                  <label class="choice-label">
+                    <input type="radio" name="change_note" value="有" required>
+                    <span class="choice-text">有</span>
+                  </label>
+                  <label class="choice-label">
+                    <input type="radio" name="change_note" value="無">
+                    <span class="choice-text">無</span>
+                  </label>
+                </div>
+              </div>
+
+              <!-- 応援の有無 -->
+              <div class="check-row multi-choice support-row">
+                <div class="check-question">応援の有無</div>
+                <div class="multi-choices">
+                  <label class="choice-label">
+                    <input type="radio" name="support" value="有" required onchange="toggleSupportCount(true)">
+                    <span class="choice-text">有</span>
+                  </label>
+                  <label class="choice-label">
+                    <input type="radio" name="support" value="無" onchange="toggleSupportCount(false)">
+                    <span class="choice-text">無</span>
+                  </label>
+                  <div class="support-count" id="support-count" style="display:none;">
+                    <div class="support-count-row">
+                      <input type="text" id="support-company1" placeholder="会社名" class="support-company-input">
+                      <input type="number" id="support-rebar1" min="0" max="99" placeholder="0">
+                      名
+                    </div>
+                    <div class="support-count-row">
+                      <input type="text" id="support-company2" placeholder="会社名" class="support-company-input">
+                      <input type="number" id="support-rebar2" min="0" max="99" placeholder="0">
+                      名
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 作業内容 -->
+            <div class="sheet-row work-content-row">
+              <div class="sheet-cell label-cell-vert">作業内容</div>
+              <div class="sheet-cell input-cell-full">
+                <textarea id="work-content" rows="4" placeholder="本日の作業内容を記入してください" required></textarea>
+              </div>
+            </div>
+
+            <!-- KY活動テーマ -->
+            <div class="sheet-row ky-row">
+              <div class="sheet-cell label-cell-vert">KY活動テーマ</div>
+              <div class="sheet-cell ky-cell">
+                <div class="ky-hint">例）〜がどうなって、〜になる</div>
+                <textarea id="ky-theme-danger" rows="2" placeholder="～がどうなって、～になる"></textarea>
+              </div>
+              <div class="sheet-cell ky-cell">
+                <div class="ky-hint">だから、私達はこうします！</div>
+                <textarea id="ky-theme-action" rows="2" placeholder="だから、私達はこうします！"></textarea>
+              </div>
+            </div>
+
+            <!-- 一口メモ -->
+            <div class="sheet-row memo-row">
+              <div class="sheet-cell memo-label">
+                <i class="fa-solid fa-pencil"></i> 一口メモ（感想）必ず記入の事!!
+              </div>
+              <div class="sheet-cell input-cell-full">
+                <textarea id="memo" rows="3" placeholder="感想・気づきを記入してください（必須）" required></textarea>
+              </div>
+            </div>
+
+          </div><!-- /.form-sheet -->
+
+          <!-- 送信ボタン -->
+          <div class="form-actions">
+            <button type="button" class="btn btn-secondary" onclick="resetForm()">
+              <i class="fa-solid fa-rotate-left"></i> リセット
+            </button>
+            <button type="submit" class="btn btn-primary" id="submit-btn">
+              <i class="fa-solid fa-paper-plane"></i> 報告書を提出する
+            </button>
+          </div>
+
+        </form>
+      </div>
+    </section>
+
+    <!-- ===== ユーザー管理ビュー（管理者専用） ===== -->
+    <section id="view-users" class="view">
+      <div class="container">
+        <div class="page-header">
+          <h2 class="page-title"><i class="fa-solid fa-users-gear"></i> ユーザー管理</h2>
+          <button class="btn btn-primary" id="btn-add-user" onclick="openAddUserModal()">
+            <i class="fa-solid fa-user-plus"></i> 新規ユーザー追加
+          </button>
+        </div>
+
+        <!-- ユーザー一覧テーブル -->
+        <div class="users-table-wrap">
+          <table class="users-table">
+            <thead>
+              <tr>
+                <th>氏名</th>
+                <th>ログインID</th>
+                <th>権限</th>
+                <th>状態</th>
+                <th>登録日</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="users-table-body">
+              <tr><td colspan="6" class="users-loading"><i class="fa-solid fa-spinner fa-spin"></i> 読み込み中...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== 詳細ビュー ===== -->
+    <section id="view-detail" class="view">
+      <div class="container">
+        <div class="page-header">
+          <h2 class="page-title"><i class="fa-solid fa-file-lines"></i> 報告書詳細</h2>
+          <div class="detail-btn-group">
+            <button class="btn btn-secondary" onclick="showView('list')">
+              <i class="fa-solid fa-arrow-left"></i> 一覧へ戻る
+            </button>
+            <button class="btn btn-primary" id="detail-edit-btn" onclick="editReport()">
+              <i class="fa-solid fa-pen"></i> 編集
+            </button>
+            <button class="btn btn-danger" id="detail-delete-btn" onclick="deleteReport()">
+              <i class="fa-solid fa-trash"></i> 削除
+            </button>
+          </div>
+        </div>
+        <div id="detail-content"></div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- トースト -->
+  <div id="toast" class="toast"></div>
+
+  <!-- ユーザー追加モーダル（管理者専用） -->
+  <div id="add-user-modal-overlay" class="modal-overlay" onclick="closeAddUserModal()">
+    <div class="modal add-user-modal" onclick="event.stopPropagation()">
+      <div class="modal-icon" style="color:var(--primary);"><i class="fa-solid fa-user-plus"></i></div>
+      <h3 class="modal-title">新規ユーザー追加</h3>
+
+      <form id="add-user-form" onsubmit="submitAddUser(event)" autocomplete="off">
+        <div class="add-user-fields">
+
+          <div class="add-user-row">
+            <label class="add-user-label">氏名 <span class="required-mark">*</span></label>
+            <input type="text" id="new-user-name" class="add-user-input" placeholder="例：田中 太郎" required autocomplete="off">
+          </div>
+
+          <div class="add-user-row">
+            <label class="add-user-label">ログインID <span class="required-mark">*</span></label>
+            <input type="text" id="new-user-login-id" class="add-user-input" placeholder="例：tanaka_taro" required autocomplete="off">
+            <p class="add-user-hint">半角英数字・アンダースコア推奨</p>
+          </div>
+
+          <div class="add-user-row">
+            <label class="add-user-label">初期パスワード <span class="required-mark">*</span></label>
+            <div class="add-user-pw-wrap">
+              <input type="password" id="new-user-password" class="add-user-input" placeholder="パスワードを入力" required autocomplete="new-password">
+              <button type="button" class="toggle-pw" onclick="toggleNewUserPw()" tabindex="-1">
+                <i class="fa-solid fa-eye" id="new-user-pw-icon"></i>
+              </button>
+            </div>
+          </div>
+
+          <div class="add-user-row">
+            <label class="add-user-label">パスワード確認 <span class="required-mark">*</span></label>
+            <div class="add-user-pw-wrap">
+              <input type="password" id="new-user-password-confirm" class="add-user-input" placeholder="もう一度入力" required autocomplete="new-password">
+              <button type="button" class="toggle-pw" onclick="toggleNewUserPwConfirm()" tabindex="-1">
+                <i class="fa-solid fa-eye" id="new-user-pw-confirm-icon"></i>
+              </button>
+            </div>
+          </div>
+
+          <div class="add-user-row">
+            <label class="add-user-label">権限</label>
+            <div class="add-user-role-badge"><i class="fa-solid fa-user"></i> 一般（固定）</div>
+          </div>
+
+        </div>
+
+        <div class="add-user-error" id="add-user-error" style="display:none;"></div>
+
+        <div class="modal-actions" style="margin-top:20px;">
+          <button type="button" class="btn btn-secondary" onclick="closeAddUserModal()">キャンセル</button>
+          <button type="submit" class="btn btn-primary" id="add-user-submit-btn">
+            <i class="fa-solid fa-user-plus"></i> 追加する
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ユーザー編集モーダル（管理者専用） -->
+  <div id="edit-user-modal-overlay" class="modal-overlay" onclick="closeEditUserModal()">
+    <div class="modal add-user-modal" onclick="event.stopPropagation()">
+      <div class="modal-icon" style="color:var(--primary);"><i class="fa-solid fa-user-pen"></i></div>
+      <h3 class="modal-title">ユーザー情報を編集</h3>
+      <form id="edit-user-form" onsubmit="submitEditUser(event)" autocomplete="off">
+        <input type="hidden" id="edit-user-db-id">
+        <div class="add-user-fields">
+          <div class="add-user-row">
+            <label class="add-user-label">氏名 <span class="required-mark">*</span></label>
+            <input type="text" id="edit-user-name" class="add-user-input" placeholder="例：田中 太郎" required autocomplete="off">
+          </div>
+          <div class="add-user-row">
+            <label class="add-user-label">ログインID <span class="required-mark">*</span></label>
+            <input type="text" id="edit-user-login-id" class="add-user-input" placeholder="例：tanaka_taro" required autocomplete="off">
+            <p class="add-user-hint">変更した場合、次回ログイン時から新しいIDが必要です</p>
+          </div>
+          <div class="add-user-row">
+            <label class="add-user-label">権限</label>
+            <div class="add-user-role-badge"><i class="fa-solid fa-user"></i> 一般（変更不可）</div>
+          </div>
+        </div>
+        <div class="add-user-error" id="edit-user-error" style="display:none;"></div>
+        <div class="modal-actions" style="margin-top:20px;">
+          <button type="button" class="btn btn-secondary" onclick="closeEditUserModal()">キャンセル</button>
+          <button type="submit" class="btn btn-primary" id="edit-user-submit-btn">
+            <i class="fa-solid fa-floppy-disk"></i> 保存する
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ユーザーパスワード変更モーダル（管理者専用） -->
+  <div id="change-pw-modal-overlay" class="modal-overlay" onclick="closeChangePwModal()">
+    <div class="modal add-user-modal" onclick="event.stopPropagation()">
+      <div class="modal-icon" style="color:#d97706;"><i class="fa-solid fa-key"></i></div>
+      <h3 class="modal-title">パスワード変更</h3>
+      <p class="modal-message" id="change-pw-target-name" style="font-weight:700;color:var(--text-primary);"></p>
+      <form id="change-pw-form" onsubmit="submitChangePw(event)" autocomplete="off">
+        <input type="hidden" id="change-pw-db-id">
+        <div class="add-user-fields">
+          <div class="add-user-row">
+            <label class="add-user-label">新しいパスワード <span class="required-mark">*</span></label>
+            <div class="add-user-pw-wrap">
+              <input type="password" id="change-pw-new" class="add-user-input" placeholder="4文字以上" required autocomplete="new-password">
+              <button type="button" class="toggle-pw" onclick="toggleChangePw()" tabindex="-1">
+                <i class="fa-solid fa-eye" id="change-pw-icon"></i>
+              </button>
+            </div>
+          </div>
+          <div class="add-user-row">
+            <label class="add-user-label">確認 <span class="required-mark">*</span></label>
+            <div class="add-user-pw-wrap">
+              <input type="password" id="change-pw-confirm" class="add-user-input" placeholder="もう一度入力" required autocomplete="new-password">
+              <button type="button" class="toggle-pw" onclick="toggleChangePwConfirm()" tabindex="-1">
+                <i class="fa-solid fa-eye" id="change-pw-confirm-icon"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class="add-user-error" id="change-pw-error" style="display:none;"></div>
+        <div class="modal-actions" style="margin-top:20px;">
+          <button type="button" class="btn btn-secondary" onclick="closeChangePwModal()">キャンセル</button>
+          <button type="submit" class="btn btn-primary" id="change-pw-submit-btn">
+            <i class="fa-solid fa-key"></i> 変更する
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ユーザー有効/無効切り替え確認モーダル -->
+  <div id="toggle-user-modal-overlay" class="modal-overlay" onclick="closeToggleUserModal()">
+    <div class="modal" onclick="event.stopPropagation()">
+      <div class="modal-icon" id="toggle-user-icon"><i class="fa-solid fa-circle-question"></i></div>
+      <h3 class="modal-title" id="toggle-user-title">状態変更の確認</h3>
+      <p class="modal-message" id="toggle-user-message"></p>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" onclick="closeToggleUserModal()">キャンセル</button>
+        <button class="btn btn-primary" id="toggle-user-confirm-btn">変更する</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ユーザー削除確認モーダル（管理者専用） -->
+  <div id="delete-user-modal-overlay" class="modal-overlay" onclick="closeDeleteUserModal()">
+    <div class="modal" onclick="event.stopPropagation()">
+      <div class="modal-icon" style="color:#dc2626;"><i class="fa-solid fa-user-xmark"></i></div>
+      <h3 class="modal-title">ユーザーを削除</h3>
+      <p class="modal-message" id="delete-user-message"></p>
+      <div class="add-user-error" id="delete-user-warning" style="display:flex; background:#fff8e1; border-color:#fcd34d; color:#92400e; margin-bottom:0;">
+        <i class="fa-solid fa-triangle-exclamation"></i>
+        削除すると元に戻せません。過去の日報データは残りますが、このアカウントでのログインができなくなります。無効化の利用を推奨します。
+      </div>
+      <div class="modal-actions" style="margin-top:16px;">
+        <button class="btn btn-secondary" onclick="closeDeleteUserModal()">キャンセル</button>
+        <button class="btn btn-danger" id="delete-user-confirm-btn">
+          <i class="fa-solid fa-trash"></i> 削除する
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 削除確認モーダル -->
+  <div id="modal-overlay" class="modal-overlay" onclick="closeModal()">
+    <div class="modal" onclick="event.stopPropagation()">
+      <div class="modal-icon"><i class="fa-solid fa-triangle-exclamation"></i></div>
+      <h3 class="modal-title">削除の確認</h3>
+      <p class="modal-message">この報告書を削除してもよいですか？<br>この操作は取り消せません。</p>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" onclick="closeModal()">キャンセル</button>
+        <button class="btn btn-danger" id="confirm-delete-btn">削除する</button>
+      </div>
+    </div>
+  </div>
+
+  </div><!-- /#app-wrapper -->
+
+  <!-- ===== 一括削除モーダル ===== -->
+  <div id="bulk-delete-modal-overlay" class="modal-overlay" onclick="closeBulkDeleteModal()">
+    <div class="modal bulk-delete-modal" onclick="event.stopPropagation()">
+      <div class="modal-icon" style="color:#dc2626;"><i class="fa-solid fa-trash-can"></i></div>
+      <h3 class="modal-title">日報一括削除</h3>
+      <p class="modal-message">条件を指定して日報を一括削除します。<br>この操作は<strong>取り消せません</strong>。</p>
+
+      <div class="pdf-filter-group">
+        <div class="pdf-filter-row">
+          <label>現場名</label>
+          <select id="bulk-filter-site">
+            <option value="">すべての現場</option>
+          </select>
+        </div>
+        <div class="pdf-filter-row">
+          <label>記入者</label>
+          <select id="bulk-filter-recorder">
+            <option value="">全員</option>
+          </select>
+        </div>
+        <div class="pdf-filter-row">
+          <label>期間（開始）</label>
+          <input type="date" id="bulk-date-from">
+        </div>
+        <div class="pdf-filter-row">
+          <label>期間（終了）</label>
+          <input type="date" id="bulk-date-to">
+        </div>
+      </div>
+
+      <div class="pdf-count-label bulk-count-label" id="bulk-count-label">対象：0 件</div>
+
+      <div class="bulk-delete-warning">
+        <i class="fa-solid fa-triangle-exclamation"></i>
+        削除すると元に戻すことはできません。よく確認してから実行してください。
+      </div>
+
+      <div class="bulk-delete-confirm-row">
+        <label>
+          <input type="checkbox" id="bulk-confirm-check" onchange="updateBulkDeleteBtn()">
+          <span>対象の日報を削除することを確認しました</span>
+        </label>
+      </div>
+
+      <div class="pdf-progress" id="bulk-progress"></div>
+
+      <div class="modal-actions">
+        <button class="btn btn-secondary" id="bulk-cancel-btn" onclick="closeBulkDeleteModal()">キャンセル</button>
+        <button class="btn btn-bulk-exec" id="bulk-exec-btn" onclick="executeBulkDelete()" disabled>
+          <i class="fa-solid fa-trash-can"></i> 一括削除する
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- PDF出力用の非表示レンダリングエリア -->
+  <div id="pdf-render-area" style="position:fixed;left:-9999px;top:0;width:900px;background:#fff;padding:32px;font-family:'Noto Sans JP',sans-serif;"></div>
+
+  <!-- PDFダウンロードモーダル -->
+  <div id="pdf-modal-overlay" class="modal-overlay" onclick="closePdfModal()">
+    <div class="modal pdf-modal" onclick="event.stopPropagation()">
+      <div class="modal-icon" style="color:#dc2626;"><i class="fa-solid fa-file-pdf"></i></div>
+      <h3 class="modal-title">PDF一括ダウンロード</h3>
+      <p class="modal-message">ダウンロードする対象を絞り込んでください</p>
+
+      <div class="pdf-filter-group">
+        <div class="pdf-filter-row">
+          <label>現場名</label>
+          <select id="pdf-filter-site">
+            <option value="">すべての現場</option>
+          </select>
+        </div>
+        <div class="pdf-filter-row">
+          <label>記入者</label>
+          <select id="pdf-filter-recorder">
+            <option value="">全員</option>
+          </select>
+        </div>
+        <div class="pdf-filter-row">
+          <label>期間（開始）</label>
+          <input type="date" id="pdf-date-from">
+        </div>
+        <div class="pdf-filter-row">
+          <label>期間（終了）</label>
+          <input type="date" id="pdf-date-to">
+        </div>
+      </div>
+
+      <div class="pdf-count-label" id="pdf-count-label">対象：0 件</div>
+      <div class="pdf-progress" id="pdf-progress"></div>
+
+      <div class="modal-actions">
+        <button class="btn btn-secondary" id="pdf-cancel-btn" onclick="closePdfModal()">キャンセル</button>
+        <button class="btn btn-pdf-exec" id="pdf-exec-btn" onclick="executePdfDownload()">
+          <i class="fa-solid fa-download"></i> ダウンロード
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/app.js"></script>
+  <script src="js/pdf.js"></script>
+</body>
+</html>
