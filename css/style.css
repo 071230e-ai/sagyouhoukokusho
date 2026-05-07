@@ -319,8 +319,86 @@ body {
   color: var(--text-primary);
   margin-bottom: 7px;
 }
-.date-row { display: flex; align-items: center; gap: 8px; }
+.date-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .date-fields { display: flex; align-items: center; gap: 8px; }
+
+/* ───── 勤務区分（出勤／休み）セレクター ───── */
+.work-status-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px;
+}
+.work-status-label {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--primary, #1a56a0);
+  white-space: nowrap;
+}
+.work-status-select {
+  font-size: 16px; /* iOS の自動ズーム防止 */
+  font-weight: 700;
+  padding: 6px 28px 6px 10px;
+  border: 1.5px solid var(--border-dark, #94a3b8);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--text-primary, #1a1f2e);
+  cursor: pointer;
+  min-height: 36px;
+  min-width: 92px;
+  appearance: auto;
+  -webkit-appearance: menulist;
+}
+.work-status-select:focus {
+  outline: none;
+  border-color: var(--primary, #1a56a0);
+  box-shadow: 0 0 0 2px rgba(26, 86, 160, 0.15);
+}
+/* 「休み」が選択されている時の視覚的強調 */
+.work-status-select.is-holiday {
+  background: #fff7ed;
+  border-color: #f59e0b;
+  color: #92400e;
+}
+/* スマホ最適化 */
+@media (max-width: 600px) {
+  .date-row { gap: 8px; row-gap: 6px; }
+  .work-status-field {
+    width: 100%;
+    margin-top: 2px;
+    padding: 0;
+  }
+  .work-status-select {
+    flex: 1;
+    min-height: 40px;
+    font-size: 16px;
+  }
+}
+
+/* 一覧カード／詳細／PDFで使う「休み」バッジ */
+.rc-tag.holiday {
+  background: #fff7ed;
+  color: #b45309;
+  border: 1px solid #fcd34d;
+}
+.detail-holiday-banner {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 10px;
+  border-radius: 4px;
+  background: #fff7ed;
+  color: #b45309;
+  border: 1px solid #fcd34d;
+  font-size: 13px;
+  font-weight: 700;
+}
+/* 休みレポートのフォーム：必須でない欄を視覚的にトーンダウン */
+.form-sheet.is-holiday .sheet-cell.input-cell input:not(#report-date),
+.form-sheet.is-holiday .sheet-cell.input-cell-short input,
+.form-sheet.is-holiday .sheet-row textarea {
+  background: #f8fafc;
+}
+
 .date-input {
   border: none;
   border-bottom: 1.5px solid var(--border-dark);

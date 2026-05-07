@@ -700,6 +700,60 @@ function resetForm() {
 
   document.querySelectorAll('input[type="radio"]').forEach(r => r.checked = false);
   toggleSupportCount(false);
+
+  // 勤務区分を初期値「出勤」に戻す
+  const ws = document.getElementById('work-status');
+  if (ws) ws.value = 'work';
+  applyWorkStatusUI('work');
+}
+
+/* ===========================
+   勤務区分（出勤／休み）UI制御
+=========================== */
+// 勤務区分セレクター変更時のイベントハンドラ（HTMLからonchangeで呼ばれる）
+function onWorkStatusChange() {
+  const workStatus = document.getElementById('work-status')?.value || 'work';
+  applyWorkStatusUI(workStatus);
+}
+
+// 勤務区分に応じてフォーム入力欄の必須属性 / 視覚をトグルする。
+// 「休み」のときは required を外し、ブラウザのHTML5検証で送信が止まらないようにする。
+//
+// 念のためフォームには novalidate を付けているが、二重対策として
+// JS側でも required を除去する（出勤に戻したときは元に戻す）。
+function applyWorkStatusUI(status) {
+  const isHoliday = (status === 'holiday');
+
+  // テキスト系の必須欄
+  const textRequiredIds = ['site-name', 'foreman', 'worker-names', 'work-content', 'memo'];
+  textRequiredIds.forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (isHoliday) el.removeAttribute('required');
+    else           el.setAttribute('required', 'required');
+  });
+
+  // ラジオ系の必須欄（チェック項目・体調・加工帳・応援）
+  // これらにも required が付いており、HTML5検証で送信が止まる可能性があるため
+  // 休み時は必ず外し、出勤時は戻す。
+  const radioNames = [
+    'check_greeting', 'check_ky', 'check_foreman_support', 'check_foreman_ability',
+    'check_meeting', 'check_cleanup', 'check_tools',
+    'health', 'change_note', 'support'
+  ];
+  radioNames.forEach(name => {
+    document.querySelectorAll(`input[type="radio"][name="${name}"]`).forEach(el => {
+      if (isHoliday) el.removeAttribute('required');
+      else           el.setAttribute('required', 'required');
+    });
+  });
+
+  // 視覚的に「休み」中であることを示すクラスを付与
+  const ws = document.getElementById('work-status');
+  if (ws) ws.classList.toggle('is-holiday', isHoliday);
+
+  const sheet = document.querySelector('.form-sheet');
+  if (sheet) sheet.classList.toggle('is-holiday', isHoliday);
 }
 
 /* ===========================
@@ -718,9 +772,15 @@ function getFormData() {
     ? auth.name
     : (document.getElementById('recorder')?.value.trim() || '');
 
+  // 勤務区分（出勤=work／休み=holiday）。
+  // 既存の保存値が空（"" / null / undefined）の場合は後方互換で "work" として扱う。
+  const workStatusRaw = document.getElementById('work-status')?.value || 'work';
+  const workStatus = (workStatusRaw === 'holiday') ? 'holiday' : 'work';
+
   return {
     owner_id:              (auth && auth.role === 'user') ? auth.id : '',
     report_date:           document.getElementById('report-date')?.value || '',
+    work_status:           workStatus,
     site_name:             document.getElementById('site-name')?.value.trim() || '',
     foreman:               document.getElementById('foreman')?.value.trim() || '',
     worker_names:          document.getElementById('worker-names')?.value.trim() || '',
@@ -755,21 +815,51 @@ async function submitReport(event) {
 
   const data = getFormData();
 
-  // バリデーション
+  // ── 共通バリデーション（出勤・休みどちらも必須） ──
   if (!data.report_date) { showToast('日付を入力してください', 'error'); return; }
-  if (!data.site_name)   { showToast('現場名を入力してください', 'error'); return; }
-  if (!data.foreman)     { showToast('職長名を入力してください', 'error'); return; }
   if (!data.recorder)    { showToast('記入者名を入力してください', 'error'); return; }
-  if (!data.work_content){ showToast('作業内容を入力してください', 'error'); return; }
-  if (!data.memo)        { showToast('一口メモを必ず記入してください', 'error'); return; }
 
-  const checkFields = ['check_greeting','check_ky','check_foreman_support','check_foreman_ability','check_meeting','check_cleanup','check_tools'];
-  for (const f of checkFields) {
-    if (!data[f]) { showToast('チェック項目をすべて選択してください', 'error'); return; }
+  // ── 「休み」の場合は他の入力チェックをすべてスキップして保存可能 ──
+  // （現場名・作業内容・人数・応援・材料・備考などすべて空欄でOK）
+  if (data.work_status === 'holiday') {
+    // 休み時は不要な値をリセットして保存（混在データ防止）
+    data.site_name             = '';
+    data.foreman               = '';
+    data.worker_names          = '';
+    data.worker_count          = 0;
+    data.work_content          = '';
+    data.ky_theme_danger       = '';
+    data.ky_theme_action       = '';
+    data.memo                  = '';
+    data.support               = '';
+    data.support_company1      = '';
+    data.support_company2      = '';
+    data.support_rebar1_count  = 0;
+    data.support_rebar2_count  = 0;
+    data.check_greeting        = '';
+    data.check_ky              = '';
+    data.check_foreman_support = '';
+    data.check_foreman_ability = '';
+    data.check_meeting         = '';
+    data.check_cleanup         = '';
+    data.check_tools           = '';
+    data.health                = '';
+    data.change_note           = '';
+  } else {
+    // ── 出勤の場合は従来通りの必須チェック ──
+    if (!data.site_name)   { showToast('現場名を入力してください', 'error'); return; }
+    if (!data.foreman)     { showToast('職長名を入力してください', 'error'); return; }
+    if (!data.work_content){ showToast('作業内容を入力してください', 'error'); return; }
+    if (!data.memo)        { showToast('一口メモを必ず記入してください', 'error'); return; }
+
+    const checkFields = ['check_greeting','check_ky','check_foreman_support','check_foreman_ability','check_meeting','check_cleanup','check_tools'];
+    for (const f of checkFields) {
+      if (!data[f]) { showToast('チェック項目をすべて選択してください', 'error'); return; }
+    }
+    if (!data.health)       { showToast('体調を選択してください', 'error'); return; }
+    if (!data.change_note)  { showToast('加工帳・ミスの有無を選択してください', 'error'); return; }
+    if (!data.support)      { showToast('応援の有無を選択してください', 'error'); return; }
   }
-  if (!data.health)       { showToast('体調を選択してください', 'error'); return; }
-  if (!data.change_note)  { showToast('加工帳・ミスの有無を選択してください', 'error'); return; }
-  if (!data.support)      { showToast('応援の有無を選択してください', 'error'); return; }
 
   const submitBtn = document.getElementById('submit-btn');
   submitBtn.disabled = true;
@@ -908,27 +998,36 @@ function renderReportList() {
 
 function renderCard(r) {
   const dateStr = formatDate(r.report_date);
-  const hasChange = r.change_note === '有';
-  const checkIssues = ['check_greeting','check_ky','check_foreman_support',
+  const isHoliday = (r.work_status === 'holiday');
+  const hasChange = !isHoliday && r.change_note === '有';
+  const checkIssues = isHoliday ? 0 : ['check_greeting','check_ky','check_foreman_support',
     'check_foreman_ability','check_meeting','check_cleanup','check_tools']
     .filter(k => r[k] === '×').length;
 
+  // 休みの場合は現場名欄に「休み」と表示し、他バッジは抑制
+  const siteText = isHoliday
+    ? '休み'
+    : (r.site_name || '（現場名未記入）');
+
   return `
-    <article class="report-card" onclick="showDetail('${r.id}')">
+    <article class="report-card${isHoliday ? ' is-holiday' : ''}" onclick="showDetail('${r.id}')">
       <div class="rc-top">
         <span class="rc-date"><i class="fa-regular fa-calendar"></i>${escHtml(dateStr)}</span>
-        <span class="rc-site">${escHtml(r.site_name || '（現場名未記入）')}</span>
+        <span class="rc-site">${escHtml(siteText)}</span>
+        ${isHoliday ? `<span class="rc-tag holiday"><i class="fa-solid fa-mug-hot"></i> 休み</span>` : ''}
         ${hasChange ? `<span class="rc-tag danger"><i class="fa-solid fa-triangle-exclamation"></i> 変更あり</span>` : ''}
         ${checkIssues > 0 ? `<span class="rc-tag danger">×が${checkIssues}件</span>` : ''}
-        ${r.support === '有' ? `<span class="rc-tag"><i class="fa-solid fa-users"></i> 応援あり</span>` : ''}
+        ${(!isHoliday && r.support === '有') ? `<span class="rc-tag"><i class="fa-solid fa-users"></i> 応援あり</span>` : ''}
       </div>
       <div class="rc-mid">
-        <span><i class="fa-solid fa-user-tie"></i> 職長：${escHtml(r.foreman || '―')}</span>
-        <span><i class="fa-solid fa-users"></i> ${r.worker_count || 0}名</span>
-        <span><i class="fa-solid fa-pen"></i> 記入者：${escHtml(r.recorder || '―')}</span>
-        <span>${healthBadgeInline(r.health)}</span>
+        ${isHoliday
+          ? `<span><i class="fa-solid fa-pen"></i> 記入者：${escHtml(r.recorder || '―')}</span>`
+          : `<span><i class="fa-solid fa-user-tie"></i> 職長：${escHtml(r.foreman || '―')}</span>
+             <span><i class="fa-solid fa-users"></i> ${r.worker_count || 0}名</span>
+             <span><i class="fa-solid fa-pen"></i> 記入者：${escHtml(r.recorder || '―')}</span>
+             <span>${healthBadgeInline(r.health)}</span>`}
       </div>
-      <div class="rc-bottom">${escHtml(r.work_content || '')}</div>
+      <div class="rc-bottom">${escHtml(isHoliday ? '（休み）' : (r.work_content || ''))}</div>
     </article>`;
 }
 
@@ -1005,6 +1104,10 @@ async function showDetail(id) {
 
     const dateStr = formatDate(r.report_date);
     const dow     = r.report_date ? WEEKDAYS[new Date(r.report_date + 'T00:00:00').getDay()] + '曜日' : '';
+    const isHoliday = (r.work_status === 'holiday');
+    const workStatusBadge = isHoliday
+      ? '<span class="detail-holiday-banner"><i class="fa-solid fa-mug-hot"></i> 休み</span>'
+      : '';
 
     const checks = [
       { label: 'あいさつは出来ていましたか？',             key: 'check_greeting'        },
@@ -1047,14 +1150,14 @@ async function showDetail(id) {
           <div class="detail-title-box">作　業　報　告　書</div>
           <div class="detail-company-box">
             <div class="detail-company-name">村田鉄筋株式会社</div>
-            <div class="detail-date">${escHtml(dateStr)}　${escHtml(dow)}</div>
+            <div class="detail-date">${escHtml(dateStr)}　${escHtml(dow)}${workStatusBadge}</div>
           </div>
         </div>
 
         <!-- 現場名・職長 -->
         <div class="detail-row">
           <div class="detail-label-cell">現場名：</div>
-          <div class="detail-value-cell">${escHtml(r.site_name || '')}</div>
+          <div class="detail-value-cell">${escHtml(isHoliday ? '休み' : (r.site_name || ''))}</div>
           <div class="detail-label-cell narrow">職　長：</div>
           <div class="detail-value-cell">${escHtml(r.foreman || '')}</div>
         </div>
@@ -1165,6 +1268,12 @@ async function editReport() {
     document.getElementById('edit-id').value = r.id;
     document.getElementById('form-title').innerHTML = '<i class="fa-solid fa-pen"></i> 報告書を編集';
     document.getElementById('submit-btn').innerHTML = '<i class="fa-solid fa-floppy-disk"></i> 更新する';
+
+    // 勤務区分（後方互換: 既存データで未設定の場合は「出勤」として扱う）
+    const wsEl = document.getElementById('work-status');
+    const wsVal = (r.work_status === 'holiday') ? 'holiday' : 'work';
+    if (wsEl) wsEl.value = wsVal;
+    applyWorkStatusUI(wsVal);
 
     // テキスト系
     const setVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ''; };

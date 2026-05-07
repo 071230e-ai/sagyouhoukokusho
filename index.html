@@ -190,7 +190,7 @@
         </div>
 
         <!-- 帳票風フォーム -->
-        <form id="report-form" onsubmit="submitReport(event)">
+        <form id="report-form" onsubmit="submitReport(event)" novalidate>
           <input type="hidden" id="edit-id">
 
           <!-- 帳票ヘッダー -->
@@ -207,6 +207,14 @@
                       <input type="date" id="report-date" class="date-input" required>
                     </div>
                     <span class="day-label" id="day-label">曜日</span>
+                  </div>
+                  <!-- 勤務区分セレクター（出勤／休み） -->
+                  <div class="work-status-field">
+                    <label for="work-status" class="work-status-label">勤務区分：</label>
+                    <select id="work-status" class="work-status-select" onchange="onWorkStatusChange()">
+                      <option value="work" selected>出勤</option>
+                      <option value="holiday">休み</option>
+                    </select>
                   </div>
                 </div>
               </div>

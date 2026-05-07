@@ -188,9 +188,17 @@ async function executePdfDownload() {
    報告書HTML生成（帳票レイアウト）
 =========================== */
 function buildReportHtml(r) {
+  // 安全に空オブジェクトを補正（null/undefined 対策）
+  r = r || {};
+
   const dateStr = pdfFormatDate(r.report_date);
   const dow     = r.report_date
     ? WEEKDAYS_PDF[new Date(r.report_date + 'T00:00:00').getDay()] + '曜日'
+    : '';
+  const isHoliday = (r.work_status === 'holiday');
+  // 勤務区分バッジ（休み時のみ表示）
+  const workStatusBadgeHtml = isHoliday
+    ? '<span style="display:inline-block;margin-left:10px;padding:2px 10px;border:1.5px solid #f59e0b;background:#fff7ed;color:#b45309;font-size:13px;font-weight:bold;border-radius:4px;">休み</span>'
     : '';
 
   const checks = [
@@ -263,7 +271,7 @@ function buildReportHtml(r) {
         </td>
         <td style="padding:10px 16px;vertical-align:middle;">
           <div style="font-size:15px;font-weight:bold;margin-bottom:5px;color:#1a2540;">村田鉄筋株式会社</div>
-          <div style="font-size:14px;font-weight:bold;color:#1a2540;">${escPdf(dateStr)}　${escPdf(dow)}</div>
+          <div style="font-size:14px;font-weight:bold;color:#1a2540;">${escPdf(dateStr)}　${escPdf(dow)}${workStatusBadgeHtml}</div>
         </td>
       </tr>
     </table>
@@ -272,7 +280,7 @@ function buildReportHtml(r) {
     <table style="width:100%;border:2px solid #333;border-top:0;border-collapse:collapse;">
       <tr>
         <td style="background:#e8edf5;font-weight:bold;font-size:12px;padding:6px 10px;white-space:nowrap;border-right:1px solid #bbb;border-bottom:1px solid #bbb;width:76px;color:#2a3a5c;">現場名：</td>
-        <td style="padding:6px 10px;font-size:13px;border-right:1px solid #bbb;border-bottom:1px solid #bbb;">${escPdf(r.site_name || '')}</td>
+        <td style="padding:6px 10px;font-size:13px;border-right:1px solid #bbb;border-bottom:1px solid #bbb;">${escPdf(isHoliday ? '休み' : (r.site_name || ''))}</td>
         <td style="background:#e8edf5;font-weight:bold;font-size:12px;padding:6px 10px;white-space:nowrap;border-right:1px solid #bbb;border-bottom:1px solid #bbb;width:56px;color:#2a3a5c;">職　長：</td>
         <td style="padding:6px 10px;font-size:13px;border-bottom:1px solid #bbb;">${escPdf(r.foreman || '')}</td>
       </tr>
@@ -338,7 +346,7 @@ function buildReportHtml(r) {
     <table style="width:100%;border:2px solid #333;border-top:0;border-collapse:collapse;">
       <tr>
         <td style="background:#e8edf5;font-weight:bold;font-size:12px;padding:8px 10px;border-right:1px solid #bbb;border-bottom:1px solid #bbb;white-space:nowrap;vertical-align:top;color:#2a3a5c;width:76px;">作業内容</td>
-        <td style="padding:8px 12px;font-size:13px;min-height:70px;white-space:pre-wrap;line-height:1.75;border-bottom:1px solid #bbb;">${escPdf(r.work_content || '')}</td>
+        <td style="padding:8px 12px;font-size:13px;min-height:70px;white-space:pre-wrap;line-height:1.75;border-bottom:1px solid #bbb;">${escPdf(isHoliday ? '（休み）' : (r.work_content || ''))}</td>
       </tr>
 
       <!-- KY活動テーマ -->
